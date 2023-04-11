@@ -1,0 +1,662 @@
+---
+title: "Supplementary Figures"
+author: "D. Nākoa Farrant"
+date: "2023-04-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(terra)
+library(sf)
+library(here)
+library(reshape)
+library(RSQLite)
+library(exactextractr)
+library(caret)
+```
+
+# Read in the data
+```{r}
+# abandoned sugarcane fields
+abS_figSF <- st_read(here("data/abandoned_sugar.shp")) %>% 
+  st_make_valid() %>% 
+  st_set_precision(1e6)
+
+# reference ecosystems
+ref_figSF <- st_read(here("data/reference_sites.shp")) %>% 
+  st_make_valid() %>% 
+  st_set_precision(1e6)
+```
+
+# Figure S1
+# Check structure against height from Landfire 2022
+```{r}
+evh_rast <- rast(here("data/LF2022_EVH_220_HI/Tif/LH22_EVH_220_num.tif"))
+
+evh_csv <- read_csv(here("data/LF2022_EVH_220_HI/CSV_Data/LF20_EVH_220.csv"))
+
+evh_rcl_df  <- evh_csv %>% 
+  dplyr::select(VALUE, Height)
+
+evh_rcl_m <- data.matrix(evh_rcl_df)
+
+evh_rast_rcl <- classify(evh_rast, evh_rcl_m, right = F)
+```
+```{r}
+abS_figSF_3750_sub <- abS_figSF %>% 
+  dplyr::select(FID_fig, TimeAb, area_ha, Climate, Maj_LC, Hab_Status, Island)
+
+ref_figSF_3750_sub <- ref_figSF %>% 
+  dplyr::select(FID_fig, TimeAb, area_ha, Climate, Maj_LC, Hab_Status, Island)
+
+abS_figSF_3750_sub_extract_EVH <- cbind(abS_figSF_3750_sub, exact_extract(evh_rast_rcl, abS_figSF_3750_sub, fun = c('mean')))
+
+ref_figSF_3750_sub_extract_EVH <- cbind(ref_figSF_3750_sub, exact_extract(evh_rast_rcl, ref_figSF_3750_sub, fun = c('mean')))
+
+```
+
+```{r}
+abS_figDF_3750_extract_EVH <- abS_figSF_3750_sub_extract_EVH %>% 
+  mutate(evh_mean = exact_extract.evh_rast_rcl..abS_figSF_3750_sub..fun...c..mean...) %>% 
+  st_drop_geometry() %>% 
+  filter(!is.na(evh_mean))
+
+ref_figDF_3750_extract_EVH <- ref_figSF_3750_sub_extract_EVH %>% 
+  mutate(evh_mean = exact_extract.evh_rast_rcl..ref_figSF_3750_sub..fun...c..mean...) %>% 
+  st_drop_geometry() %>% 
+  filter(!is.na(evh_mean))
+```
+
+```{r}
+abS_summ_EVH_weighted <- abS_figDF_3750_extract_EVH %>%
+  group_by(FID_fig, TimeAb) %>% 
+  summarise(FID_area = sum(area_ha), evh_mean_FID = mean(evh_mean)) %>% 
+  ungroup() %>% 
+  group_by(TimeAb) %>% 
+  summarise(TimeAbArea = sum(FID_area), obs_count = length(TimeAb), evh_mean_AW = sum(evh_mean_FID *FID_area)/sum(FID_area), evh_mean_sd_AW = sqrt(sum(FID_area * (evh_mean_FID-evh_mean_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), evh_mean_se = evh_mean_sd_AW/sqrt(obs_count), evh_mean_95perc = 1.96*evh_mean_se)
+
+# One of the year's has a single observation, so it has an infinite standard error
+# make the standard error zero for this observation
+
+abS_summ_EVH_weighted$evh_mean_95perc <- ifelse(abS_summ_EVH_weighted$obs_count == 1, 0, abS_summ_EVH_weighted$evh_mean_95perc)
+
+ref_summ_EVH_weighted <- ref_figDF_3750_extract_EVH %>%
+  group_by(FID_fig, TimeAb) %>% 
+  summarise(FID_area = sum(area_ha), evh_mean_FID = mean(evh_mean)) %>% 
+  ungroup() %>% 
+  group_by(TimeAb) %>% 
+  summarise(TimeAbArea = sum(FID_area), obs_count = length(TimeAb), evh_mean_AW = sum(evh_mean_FID *FID_area)/sum(FID_area), evh_mean_sd_AW = sqrt(sum(FID_area * (evh_mean_FID-evh_mean_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), evh_mean_se = evh_mean_sd_AW/sqrt(obs_count), evh_mean_95perc = 1.96*evh_mean_se)
+```
+
+
+```{r}
+evh_df <- abS_summ_EVH_weighted %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+evh_model <- lm(evh_mean_AW ~ log(Time), data = evh_df)
+summary(evh_model)
+
+Time = seq(1,120)
+
+evh_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(evh_model,newdata=list(Time)))
+
+# Time to reach reference Not Vegetated cover
+ref_evh <- ref_summ_EVH_weighted %>% 
+  ungroup()
+
+ref_evh_val <- ref_evh$evh_mean_AW
+
+ref_evh_time <- exp((ref_evh_val - evh_model$coefficients[["(Intercept)"]])/evh_model$coefficients[["log(Time)"]])
+
+ref_evh_time
+```
+
+
+```{r}
+EVH_TimeAb_plot <- ggplot(data = abS_summ_EVH_weighted) +
+  geom_point(aes(x = TimeAb, y = evh_mean_AW), color = "#FF9900") +
+  geom_errorbar(aes(x = TimeAb, ymin=evh_mean_AW-evh_mean_95perc, ymax=evh_mean_AW+evh_mean_95perc), width=.2, color = "#FF9900") +
+  labs(x = "Time Abandoned (Years)", y = "Vegetation Height (m)") +
+  theme_bw() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1))
+
+EVH_TimeAb_plot + geom_hline(data = ref_summ_EVH_weighted, aes(yintercept = evh_mean_AW), color = "blue") +
+  #geom_hline(yintercept = 0, color = "black") +
+                           labs(linetype = "") +
+  #theme(legend.spacing.y = unit(0, "pt")) +
+  #guides(linetype = "none") + # removes legend completely
+  geom_line(data = evh_fit_df %>% filter(pred >= 0), aes(x = Time, y = pred), color = "grey40", linetype = "dashed") +
+  labs()
+```
+
+# Figures S2 and S3
+
+```{r}
+abS_summ_EVH_moisture_weighted <- abS_figDF_3750_extract_EVH %>%
+  group_by(FID_fig, TimeAb, Climate) %>% 
+  summarise(FID_area = sum(area_ha), evh_mean_FID = mean(evh_mean)) %>% 
+  ungroup() %>% 
+  group_by(TimeAb, Climate) %>% 
+  summarise(TimeAbArea = sum(FID_area), obs_count = length(TimeAb), evh_mean_AW = sum(evh_mean_FID *FID_area)/sum(FID_area), evh_mean_sd_AW = sqrt(sum(FID_area * (evh_mean_FID-evh_mean_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), evh_mean_se = evh_mean_sd_AW/sqrt(obs_count), evh_mean_95perc = 1.96*evh_mean_se)
+
+abS_summ_EVH_Island_weighted <- abS_figDF_3750_extract_EVH %>%
+  group_by(FID_fig, TimeAb, Island) %>% 
+  summarise(FID_area = sum(area_ha), evh_mean_FID = mean(evh_mean)) %>% 
+  ungroup() %>% 
+  group_by(TimeAb, Island) %>% 
+  summarise(TimeAbArea = sum(FID_area), obs_count = length(TimeAb), evh_mean_AW = sum(evh_mean_FID *FID_area)/sum(FID_area), evh_mean_sd_AW = sqrt(sum(FID_area * (evh_mean_FID-evh_mean_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), evh_mean_se = evh_mean_sd_AW/sqrt(obs_count), evh_mean_95perc = 1.96*evh_mean_se)
+
+
+ref_summ_EVH_moisture_weighted <- ref_figDF_3750_extract_EVH %>%
+  group_by(FID_fig, TimeAb, Climate) %>% 
+  summarise(FID_area = sum(area_ha), evh_mean_FID = mean(evh_mean)) %>% 
+  ungroup() %>% 
+  group_by(TimeAb, Climate) %>% 
+  summarise(TimeAbArea = sum(FID_area), obs_count = length(TimeAb), evh_mean_AW = sum(evh_mean_FID *FID_area)/sum(FID_area), evh_mean_sd_AW = sqrt(sum(FID_area * (evh_mean_FID-evh_mean_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), evh_mean_se = evh_mean_sd_AW/sqrt(obs_count), evh_mean_95perc = 1.96*evh_mean_se)
+
+ref_summ_EVH_Island_weighted <- ref_figDF_3750_extract_EVH %>%
+  group_by(FID_fig, TimeAb, Island) %>% 
+  summarise(FID_area = sum(area_ha), evh_mean_FID = mean(evh_mean)) %>% 
+  ungroup() %>% 
+  group_by(TimeAb, Island) %>% 
+  summarise(TimeAbArea = sum(FID_area), obs_count = length(TimeAb), evh_mean_AW = sum(evh_mean_FID *FID_area)/sum(FID_area), evh_mean_sd_AW = sqrt(sum(FID_area * (evh_mean_FID-evh_mean_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), evh_mean_se = evh_mean_sd_AW/sqrt(obs_count), evh_mean_95perc = 1.96*evh_mean_se)
+```
+```{r}
+evh_wet_df <- abS_summ_EVH_moisture_weighted %>% 
+  filter(Climate == "Wet") %>% 
+  mutate(Time = as.numeric(TimeAb))
+  
+evh_mesic_df <- abS_summ_EVH_moisture_weighted %>% 
+  filter(Climate == "Mesic") %>% 
+  mutate(Time = as.numeric(TimeAb))
+  
+evh_mesic_wet_df <- abS_summ_EVH_moisture_weighted %>% 
+  filter(Climate == "Wet and Mesic") %>% 
+  mutate(Time = as.numeric(TimeAb))
+  
+evh_dry_df <- abS_summ_EVH_moisture_weighted %>% 
+  filter(Climate == "Dry") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+evh_moistureAll_df <- abS_summ_EVH_moisture_weighted %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+evh_wet_model <- lm(evh_mean_AW ~ log(Time), data = evh_wet_df)
+evh_mesic_model <- lm(evh_mean_AW ~ log(Time), data = evh_mesic_df)
+evh_mesic_wet_model <- lm(evh_mean_AW ~ log(Time), data = evh_mesic_wet_df)
+evh_dry_model <- lm(evh_mean_AW ~ log(Time), data = evh_dry_df)
+evh_moistureAll_model <- lm(evh_mean_AW ~ log(Time), data = evh_moistureAll_df)
+
+summary(evh_wet_model)
+summary(evh_mesic_model)
+summary(evh_mesic_wet_model)
+summary(evh_dry_model)
+summary(evh_moistureAll_model)
+
+Time = seq(1,120)
+
+evh_wet_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(evh_wet_model,newdata=list(Time)), Climate = "Wet")
+evh_mesic_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(evh_mesic_model,newdata=list(Time)), Climate = "Mesic")
+evh_mesic_wet_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(evh_mesic_wet_model,newdata=list(Time)), Climate = "Wet and Mesic")
+evh_dry_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(evh_dry_model,newdata=list(Time)), Climate = "Dry")
+evh_moistureAll_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(evh_moistureAll_model,newdata=list(Time)))
+
+evh_moisture_fit_df <- do.call("rbind", list(evh_wet_fit_df, evh_mesic_fit_df, evh_mesic_wet_fit_df, evh_dry_fit_df))
+
+evh_moisture_fit_df$Climate <- factor(evh_moisture_fit_df$Climate, level = c("Wet", "Wet and Mesic", "Mesic", "Dry"))
+ref_summ_EVH_moisture_weighted$Climate <- factor(ref_summ_EVH_moisture_weighted$Climate, level = c("Wet", "Wet and Mesic", "Mesic", "Dry"))
+
+```
+
+```{r}
+abS_summ_EVH_moisture_weighted$evh_mean_95perc <-ifelse(abS_summ_EVH_moisture_weighted$obs_count == 1, 0, abS_summ_EVH_moisture_weighted$evh_mean_95perc)
+```
+
+```{r}
+abS_summ_EVH_moisture_weighted$Climate <- factor(abS_summ_EVH_moisture_weighted$Climate, level = c("Wet", "Wet and Mesic", "Mesic", "Dry"))
+
+moisture_p <- ggplot(data = abS_summ_EVH_moisture_weighted %>% filter(Climate != "N/A" & Climate != "All Zones" & Climate != "Mesic and Dry")) +
+  geom_point(aes(x = TimeAb, y = evh_mean_AW), color = "orange") +
+  geom_errorbar(aes(x = TimeAb, ymin=evh_mean_AW-evh_mean_95perc, ymax=evh_mean_AW+evh_mean_95perc), color = "orange", width=.2) +
+  scale_x_continuous(limits = c(0, 120)) +
+  labs(x = "Time Abandoned (Years)", y = "Vegetation Height (m)") +
+  theme_bw() +
+  labs(color = "Climate Zone") +
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1))
+
+moisture_p + geom_hline(data = ref_summ_EVH_moisture_weighted %>% filter(Climate != "N/A" & Climate != "All Zones" & Climate != "Mesic and Dry"), aes(yintercept = evh_mean_AW), color = "blue", linetype = "dashed", linewidth = 1) +
+  geom_line(data = evh_moisture_fit_df %>% filter(pred >= 0), aes(x = Time, y = pred), color = "orange", linewidth = 1) +
+  geom_line(data = evh_moistureAll_fit_df %>% filter(pred >= 0), aes(x = Time, y = pred), color = "grey40", linetype = "dotted", linewidth = 1) +
+                           labs(linetype = "") +
+  facet_wrap(~Climate)
+
+```
+```{r}
+evh_hawaii_df <- abS_summ_EVH_Island_weighted %>% 
+  filter(Island == "Hawaii") %>% 
+  mutate(Time = as.numeric(TimeAb))
+  
+evh_maui_df <- abS_summ_EVH_Island_weighted %>% 
+  filter(Island == "Maui") %>% 
+  mutate(Time = as.numeric(TimeAb))
+  
+evh_oahu_df <- abS_summ_EVH_Island_weighted %>% 
+  filter(Island == "Oahu") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+evh_kauai_df <- abS_summ_EVH_Island_weighted %>% 
+  filter(Island == "Kauai") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+evh_allIsland_df <- abS_summ_EVH_Island_weighted %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+evh_hawaii_model <- lm(evh_mean_AW ~ log(Time), data = evh_hawaii_df)
+evh_maui_model <- lm(evh_mean_AW ~ log(Time), data = evh_maui_df)
+evh_oahu_model <- lm(evh_mean_AW ~ log(Time), data = evh_oahu_df)
+evh_kauai_model <- lm(evh_mean_AW ~ log(Time), data = evh_kauai_df)
+evh_allIsland_model <- lm(evh_mean_AW ~ log(Time), data = evh_allIsland_df)
+
+
+summary(evh_hawaii_model)
+summary(evh_maui_model)
+summary(evh_oahu_model)
+summary(evh_kauai_model)
+summary(evh_allIsland_model)
+
+Time = seq(1,120)
+
+evh_hawaii_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(evh_hawaii_model,newdata=list(Time)), Island = "Hawaii")
+evh_maui_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(evh_maui_model,newdata=list(Time)), Island = "Maui")
+evh_oahu_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(evh_oahu_model,newdata=list(Time)), Island = "Oahu")
+evh_kauai_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(evh_kauai_model,newdata=list(Time)), Island = "Kauai")
+evh_allIsland_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(evh_allIsland_model,newdata=list(Time)))
+
+evh_island_fit_df <- do.call("rbind", list(evh_hawaii_fit_df, evh_maui_fit_df, evh_oahu_fit_df, evh_kauai_fit_df))
+
+evh_island_fit_df$Island <- factor(evh_island_fit_df$Island, levels = c("Hawaii", "Maui", "Oahu", "Kauai"))
+
+```
+
+```{r}
+abS_summ_EVH_Island_weighted$evh_mean_95perc <-ifelse(abS_summ_EVH_Island_weighted$obs_count == 1, 0, abS_summ_EVH_Island_weighted$evh_mean_95perc)
+
+abS_summ_EVH_Island_weighted$Island <- factor(abS_summ_EVH_Island_weighted$Island, levels = c("Hawaii", "Maui", "Oahu", "Kauai"))
+
+# Only interested in the reference heights for the islands where there are abandoned sugarcane fields
+ref_summ_EVH_Island_weighted_sub <- ref_summ_EVH_Island_weighted %>% 
+  filter(Island == "Kauai" | Island == "Oahu" | Island == "Maui" | Island == "Hawaii")
+
+ref_summ_EVH_Island_weighted_sub$Island <- factor(ref_summ_EVH_Island_weighted_sub$Island, levels = c("Hawaii", "Maui", "Oahu", "Kauai"))
+
+# One of the year's has a single observation, so it has an infinite standard error
+# make the standard error zero for this observation
+abS_summ_EVH_Island_weighted$evh_mean_95perc <-ifelse(abS_summ_EVH_Island_weighted$obs_count == 1, 0, abS_summ_EVH_Island_weighted$evh_mean_95perc)
+
+island_p <- ggplot(data = abS_summ_EVH_Island_weighted) +
+  geom_point(aes(x = TimeAb, y = evh_mean_AW), color = "orange") +
+  geom_errorbar(aes(x = TimeAb, ymin=evh_mean_AW-evh_mean_95perc, ymax=evh_mean_AW+evh_mean_95perc), color = "orange", width=.2) +
+  labs(x = "Time Abandoned (Years)", y = "Vegetation Height (m)") +
+  theme_bw() +
+  #labs(color = "Island") +
+  theme(panel.border = element_rect(colour = "black", fill=NA, linewidth=1))
+
+island_p +
+  geom_hline(data = ref_summ_EVH_Island_weighted_sub, aes(yintercept = evh_mean_AW,), color = "blue", linetype = "dashed", linewidth = 1) +
+  geom_line(data = evh_island_fit_df %>% filter(pred >= 0), aes(x = Time, y = pred), color = "orange", linewidth = 1) +
+  geom_line(data = evh_allIsland_fit_df %>% filter(pred >= 0), aes(x = Time, y = pred), color = "grey40", linetype = "dotted", linewidth = 1) +
+                           labs(linetype = "", color = "Island") +
+  facet_wrap(~Island)
+```
+
+
+# Figures S4 and S5
+```{r}
+ref_figDF <- ref_figSF %>% 
+  st_drop_geometry()
+
+ref_figDF_summMajLC <- ref_figDF %>% 
+  group_by(Maj_LC) %>% 
+  summarise(class_area = sum(area_ha, na.rm = T)) %>% 
+  ungroup()
+
+ref_figDF_summHabStatus <- ref_figDF %>% 
+  group_by(Hab_Status) %>% 
+  summarise(class_area = sum(area_ha, na.rm = T)) %>% 
+  ungroup()
+
+library(plyr)
+ref_figDF_summHabStatus$Hab_Status <- mapvalues(ref_figDF_summHabStatus$Hab_Status, from = c("Native Dominated", "Native / Alien Mix", "Bare < 5% plant cover"), to = c("Native", "Non-Native", "Not Vegetated"))
+detach(package:plyr)
+
+ref_figDF_summMajLC$Maj_LC <- factor(ref_figDF_summMajLC$Maj_LC, levels = c("Forest", "Shrubland", "Grassland", "Not Vegetated"))
+
+ref_figDF_summHabStatus$Hab_Status <- factor(ref_figDF_summHabStatus$Hab_Status, levels = c("Native", "Non-Native", "Not Vegetated"))
+
+# Figure S4
+ggplot(ref_figDF_summMajLC, aes(x = Maj_LC, y = class_area)) + 
+  geom_col(fill = "cornflowerblue") + 
+  theme_bw() +
+  labs(x = "Structure", y = "Area of Reference Fields (ha)") 
+
+# Figure S5
+ggplot(ref_figDF_summHabStatus, aes(x = Hab_Status, y = class_area)) + 
+  geom_col(fill = "cornflowerblue") + 
+  theme_bw() +
+  labs(x = "Composition", y = "Area of Reference Fields (ha)") 
+```
+
+# Additional robustness checks
+# Check function and structure against biomass data from GEDI
+
+```{r}
+
+abS_biomass_K <- read_csv(here("data/gedi_biomass/abS_biomass_K.csv"))
+abS_biomass_O <- read_csv(here("data/gedi_biomass/abS_biomass_O.csv"))
+abS_biomass_M <- read_csv(here("data/gedi_biomass/abS_biomass_M.csv"))
+abS_biomass_H <- read_csv(here("data/gedi_biomass/abS_biomass_H.csv"))
+
+abS_biomass <- rbind(abS_biomass_K, abS_biomass_O, abS_biomass_M, abS_biomass_H)
+
+abS_biomass <- abS_biomass %>% 
+  mutate(mn_biomass = mean)
+```
+
+```{r}
+abS_figDF <- abS_ref_figDF %>% 
+  filter(TimeAb != 0) %>% 
+  mutate(TimeAb = TimeAb %>% as.numeric()) 
+
+ref_figDF <- abS_ref_figDF %>% 
+  filter(TimeAb == 0)
+
+abS_VIlong <- gather(abS_figDF, condition, measurement, savi_ho:ndwi_ka)
+ref_VIlong <- gather(ref_figDF, condition, measurement, savi_ho:ndwi_ka)
+```
+
+```{r}
+abS_VIlong$season <- ifelse(grepl("ho", abS_VIlong$condition), "Wet", 
+                                              ifelse(grepl("ka", abS_VIlong$condition),"Dry", "NA"))
+
+abS_VIlong$vegindex <- ifelse(grepl("savi", abS_VIlong$condition), "SAVI", 
+                                              ifelse(grepl("ndre", abS_VIlong$condition),"NDRE", 
+                                                     ifelse(grepl("ndwi", abS_VIlong$condition), "NDWI", "NA")))
+
+ref_VIlong$season <- ifelse(grepl("ho", ref_VIlong$condition), "Wet", 
+                                              ifelse(grepl("ka", ref_VIlong$condition),"Dry", "NA"))
+
+ref_VIlong$vegindex <- ifelse(grepl("savi", ref_VIlong$condition), "SAVI", 
+                                              ifelse(grepl("ndre", ref_VIlong$condition),"NDRE", 
+                                                     ifelse(grepl("ndwi", ref_VIlong$condition), "NDWI", "NA")))
+```
+
+```{r}
+ref_VIlong$Reference <- ifelse(ref_VIlong$TimeAb == "0", "Reference", "NA")
+
+ref_VIlong$RefSeason = ifelse(ref_VIlong$Reference == "Reference" & ref_VIlong$season == "Wet", "Reference, Wet", ifelse(ref_VIlong$Reference == "Reference" & ref_VIlong$season == "Dry", "Reference, Dry", "NA"))
+
+abS_VIlong_merge <- merge(abS_VIlong, abS_biomass, by.x = "FID_fig", by.y = "FID_bS_")
+```
+
+
+```{r}
+abS_VIlong_mean_summarise_weighted_biomass <- abS_VIlong_merge %>%
+  dplyr::select(FID_fig, TimeAb, condition, season, vegindex, measurement, mn_biomass, area_ha.x) %>% 
+  filter(!is.na(measurement), !is.na(mn_biomass)) %>% 
+  group_by(FID_fig, condition, season, TimeAb) %>% 
+  mutate(FID_area = sum(area_ha.x), mean_vi = mean(measurement), mean_bio = mean(mn_biomass)) %>%
+  ungroup() %>% 
+  group_by(TimeAb, condition, season, vegindex) %>% 
+  summarise(mean_AW = sum(mean_vi*FID_area)/sum(FID_area), bio_AW = sum(mean_bio*FID_area)/sum(FID_area), obs_count = length(TimeAb), sd_AW = sqrt(sum(FID_area * (mean_vi-mean_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), sd_bio_AW = sqrt(sum(FID_area * (mean_bio-bio_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), vi_se = sd_AW/sqrt(obs_count), bio_se = sd_bio_AW/sqrt(obs_count), vi_95perc = 1.96*vi_se, bio_95perc = 1.96*bio_se)
+```
+
+
+```{r}
+savi_cor_data <- abS_VIlong_merge %>% 
+  filter(vegindex == "SAVI") %>% 
+  filter(mn_biomass > 0) %>% 
+  mutate(biomass_log = log(mn_biomass)) %>% 
+  dplyr::select(biomass_log, measurement)
+
+ndre_cor_data <- abS_VIlong_merge %>% 
+  filter(vegindex == "NDRE") %>% 
+  filter(mn_biomass > 0) %>% 
+  mutate(biomass_log = log(mn_biomass)) %>% 
+  dplyr::select(biomass_log, measurement)
+
+ndwi_cor_data <- abS_VIlong_merge %>% 
+  filter(vegindex == "NDWI") %>% 
+  filter(mn_biomass > 0) %>% 
+  mutate(biomass_log = log(mn_biomass)) %>% 
+  dplyr::select(biomass_log, measurement)
+
+savi_cor <- cor(savi_cor_data, use = "complete.obs")
+ndre_cor <- cor(ndre_cor_data, use = "complete.obs")
+ndwi_cor <- cor(ndwi_cor_data, use = "complete.obs")
+
+round(savi_cor, 2)
+round(ndre_cor, 2)
+round(ndwi_cor, 2)
+```
+
+# Access FIA data
+```{r}
+conn <- dbConnect(RSQLite::SQLite(), here("data/Hawaii_SQLite_database/HI_Public_SQLite.db"))
+```
+
+```{r}
+plot_df <- dbGetQuery(conn, "SELECT * FROM Plot")
+tree_df <- dbGetQuery(conn, "SELECT * FROM TREE")
+species_df <- dbGetQuery(conn, "SELECT * FROM zREF_SPECIES_Scientific_Name")
+
+# condition table
+cond_df <- dbGetQuery(conn, "SELECT * FROM COND")
+```
+
+```{r}
+tree_merge_SciName <- merge(tree_df, species_df, by = "SPCD")
+tree_merge_SciName_plot <- merge(tree_merge_SciName, plot_df, by = "PLOT")
+```
+
+```{r}
+# only use samples from 2019 forest inventory analysis
+tree_merge_SciName_plot2019 <- tree_merge_SciName_plot %>% 
+  filter(INVYR.x == 2019)
+```
+
+# Add native and invasive species labels based on common names (also checked the scientific names of some species that there was confusion about to ensure they were native)
+If a tree doesnʻt have a common name that is in the "native_list" it is labelled as introduced
+```{r}
+native_list = c("sea hibiscus", "lama", "ohia lehua", "koa", "kapu melicope", "Hawaii kauilatree", "forest sandalwood", "kukaemoa", "hapuu", "olapalapa", "lapalapa", "ohia ha", "hapuu li", "koaoha", "alahee", "wili wili", "noni kuahiwi", "lonomea", "Waianae Range papala", "ha a", "ahakea lau nui", "kopiko kea", "Mao", "kopikoula", "kanawao", "ohe mauka", "manono", "kolea lau nui", "olomea", "olapa", "mamani", "kokea lau lii", "naio", "alaweo", "Kamalo pritchardia", "Waimea pipturus", "hame", "Oahu melicope", "Kauai pteralyxia", "Koolau Range wild coffee", "Kaala melicope", "Hawaii hala pepe", "Chamissos manfern", "Lanai colicwood", "Hawaii dogweed", "Oahu mirrorplant", "Maui mirrorplant", "mirrorplant", "pubescent mirrorplant", "Hawaii holly", "Hawaii olive", "largeflower wild coffee", "forest wild coffee", "wild coffee", "willowleaf sandalwood", "coastal sandalwood")
+
+tree_merge_SciName_plot2019$fiaNI <- ifelse(tree_merge_SciName_plot2019$COMMON_NAME %in% native_list, "Native", "Introduced")
+
+tree_merge_NativeIntroduced_plot_summ <- tree_merge_SciName_plot2019 %>% 
+  group_by(fiaNI, PLOT, SUBP) %>% 
+  summarize(subp_NItree_count = n()) %>% 
+  ungroup() %>% 
+  group_by(PLOT, SUBP) %>% 
+  mutate(subp_tree_tot = sum(subp_NItree_count), subp_NItree_perc = subp_NItree_count/subp_tree_tot*100) %>%
+  as.data.frame()
+
+tree_merge_NativeIntroduced_plot_summ_sub <- tree_merge_NativeIntroduced_plot_summ %>% 
+  dplyr::select(PLOT, SUBP, fiaNI, subp_NItree_perc, subp_tree_tot)
+
+tree_merge_NativeIntroduced_plot_summ_wide <- 
+reshape(tree_merge_NativeIntroduced_plot_summ_sub, idvar= c("PLOT", "SUBP"), timevar="fiaNI", v.names=c("subp_NItree_perc"), direction="wide", sep = "_")
+```
+
+# Convert the data table to sf to intersect with the carbon assessment of Hawaiʻi polygons
+```{r}
+tree_merge_SciName_plot_sf4326 <- st_as_sf(tree_merge_SciName_plot2019, coords = c("LON", "LAT"), crs = 4326)
+
+tree_merge_SciName_plot_sf3750 <- tree_merge_SciName_plot_sf4326 %>% 
+  st_transform(st_crs(3750))
+```
+
+```{r}
+tree_merge_SciName_plot_coords <- cbind(tree_merge_SciName_plot2019,  st_coordinates(tree_merge_SciName_plot_sf3750))
+```
+
+```{r}
+tree_merge_SciName_plot_coords_subp1 <- tree_merge_SciName_plot_coords %>% 
+  dplyr::select(PLOT, SUBP, X, Y) %>% 
+  filter(SUBP == 1) %>% 
+  mutate(Lat_subp = Y, Lon_subp = X)
+
+tree_merge_SciName_plot_coords_subp2 <- tree_merge_SciName_plot_coords %>% 
+  dplyr::select(PLOT, SUBP, X, Y) %>% 
+  filter(SUBP == 2) %>% 
+  mutate(Lat_subp = Y + 36.58, Lon_subp = X)
+
+tree_merge_SciName_plot_coords_subp3 <- tree_merge_SciName_plot_coords %>% 
+  dplyr::select(PLOT, SUBP, X, Y) %>% 
+  filter(SUBP == 3) %>% 
+  mutate(Lat_subp = Y - 18.29, Lon_subp = X + 31.68)
+
+tree_merge_SciName_plot_coords_subp4 <- tree_merge_SciName_plot_coords %>% 
+  dplyr::select(PLOT, SUBP, X, Y) %>% 
+  filter(SUBP == 4) %>% 
+  mutate(Lat_subp = Y - 18.29, Lon_subp = X - 31.68)
+
+tree_merge_SciName_plot_coords_subp <- rbind(tree_merge_SciName_plot_coords_subp1, tree_merge_SciName_plot_coords_subp2, tree_merge_SciName_plot_coords_subp3, tree_merge_SciName_plot_coords_subp4)
+
+  
+```
+
+```{r}
+tree_merge_SciName_plot_coords_subp_sf <- st_as_sf(tree_merge_SciName_plot_coords_subp, coords = c("Lon_subp", "Lat_subp"), crs = 3750) %>% 
+  filter()
+
+tree_merge_SciName_plot_coords_subp_sf_summ <- tree_merge_SciName_plot_coords_subp_sf %>% group_by(PLOT, SUBP) %>% 
+  summarise()
+```
+
+```{r}
+# each subplot has a radius of 7.32m
+tree_merge_SciName_plot_coords_subp_sf3750 <- st_buffer(tree_merge_SciName_plot_coords_subp_sf_summ, 7.32)
+```
+
+```{r}
+st_intersection_faster <- function(x,y,...){
+#faster replacement for st_intersection(x, y,...)
+
+  y_subset <-
+    st_intersects(x, y) %>%
+    unlist() %>%
+    unique() %>%
+    sort() %>%
+    {y[.,]}
+
+  st_intersection(x, y_subset,...)
+}
+```
+
+```{r}
+cah_sf <- st_read(here("data/cah/cah_repair.shp")) %>% 
+  st_transform(st_crs(3750)) %>% 
+  st_set_precision(1e6) %>% 
+  st_make_valid() 
+
+subp_fia_cah_intersect <- st_intersection_faster(tree_merge_SciName_plot_coords_subp_sf3750, st_make_valid(cah_sf))
+
+subp_fia_cah_intersect$area_m2 <- st_area(subp_fia_cah_intersect) %>% as.numeric()
+
+subp_fia_cah_intersect_df <- subp_fia_cah_intersect %>% 
+  st_drop_geometry()
+```
+
+```{r}
+subp_fia_cah_intersect_df_summ <- subp_fia_cah_intersect_df %>% 
+  dplyr::select(PLOT, SUBP, Hab_Status, area_m2) %>% 
+  group_by(PLOT, SUBP) %>% 
+  mutate(subp_tot_area = sum(area_m2, na.rm = T)) %>% 
+  ungroup() %>% 
+  group_by(PLOT, SUBP, Hab_Status) %>% 
+  reframe(subp_HS_area = sum(area_m2, na.rm = T), subp_perc_HS = subp_HS_area/subp_tot_area*100) %>% 
+  ungroup()
+```
+
+```{r}
+subp_fia_cah_intersect_df_summ$Hab_Status <- ifelse(subp_fia_cah_intersect_df_summ$Hab_Status == "Native / Alien Mix", "Introduced", 
+                                                ifelse(subp_fia_cah_intersect_df_summ$Hab_Status == "Native Dominated", "Native", ifelse(subp_fia_cah_intersect_df_summ$Hab_Status == "Heavily Disturbed", "Disturbed", ifelse(subp_fia_cah_intersect_df_summ$Hab_Status == "Bare < 5% plant cover", "Bare", NA))))
+```
+
+```{r}
+subp_fia_cah_intersect_df_summ <- subp_fia_cah_intersect_df_summ %>% 
+  as.data.frame() %>% 
+  dplyr::select(-subp_HS_area)
+```
+
+```{r}
+
+```
+
+```{r}
+# Determine the dominant habitat status category in each FIA plot
+subp_fia_cah_intersect_df_summ_domHabStatus <- subp_fia_cah_intersect_df_summ %>% 
+  group_by(PLOT, SUBP) %>% 
+  filter(subp_perc_HS == max(subp_perc_HS)) %>% 
+  mutate(Majority50_HS_Label = Hab_Status) %>%  # label areas with more than 50% of the HabStatus area as the dominant label 
+  ungroup()
+
+# create a new column that labels subplots with more than 75% cover of a given GIS land cover as being dominated by that m
+subp_fia_cah_intersect_df_summ_domHabStatus$Majority75_HS_Label <- ifelse(subp_fia_cah_intersect_df_summ_domHabStatus$subp_perc_HS >= 75, subp_fia_cah_intersect_df_summ_domHabStatus$Hab_Status, NA)
+
+subp_cah_majority <- subp_fia_cah_intersect_df_summ_domHabStatus %>% 
+  dplyr::select(PLOT, SUBP, Majority50_HS_Label, Majority75_HS_Label)
+
+# Determine the dominant tree category (native or introduced) according to ground observations
+tree_merge_NativeIntroduced_plot_summ_sub <- tree_merge_NativeIntroduced_plot_summ_sub %>% 
+  group_by(PLOT, SUBP) %>% 
+  filter(subp_NItree_perc == max(subp_NItree_perc)) %>% 
+  mutate(Majority50_fiaNI_Label = fiaNI) %>%  # label areas with more than 50% of the HabStatus area as the dominant label 
+  ungroup()
+
+tree_merge_NativeIntroduced_plot_summ_sub$Majority75_fiaNI_Label <- ifelse(tree_merge_NativeIntroduced_plot_summ_sub$subp_NItree_perc >= 75, tree_merge_NativeIntroduced_plot_summ_sub$fiaNI, NA)
+
+subp_fia_majority <- tree_merge_NativeIntroduced_plot_summ_sub %>% 
+  dplyr::select(PLOT, SUBP, Majority50_fiaNI_Label, Majority75_fiaNI_Label)
+
+# Merge the FIA data and the CAH GIS data into a single data frame
+merge_dominant_fia_cah <- merge(subp_fia_majority, subp_cah_majority, by = c("PLOT", "SUBP"))
+
+# Only focus on instances where the dominant GIS land cover category was either native or introduced vegetation
+merge_dominant_fia_cah_sub <- merge_dominant_fia_cah %>% 
+  filter(Majority50_HS_Label == "Introduced" | Majority50_HS_Label == "Native")
+
+# Convert the labels of the dominant vegetation to factors with the same levels for both 
+# the labels generated from ground observations and the remotely sensed labels
+merge_dominant_fia_cah_sub$Majority50_fiaNI_Label <- factor(merge_dominant_fia_cah_sub$Majority50_fiaNI_Label, levels = c("Native", "Introduced"))
+merge_dominant_fia_cah_sub$Majority75_fiaNI_Label <- factor(merge_dominant_fia_cah_sub$Majority75_fiaNI_Label, levels = c("Native", "Introduced"))
+merge_dominant_fia_cah_sub$Majority50_HS_Label <- factor(merge_dominant_fia_cah_sub$Majority50_HS_Label, levels = c("Native", "Introduced"))
+merge_dominant_fia_cah_sub$Majority75_HS_Label <- factor(merge_dominant_fia_cah_sub$Majority75_HS_Label, levels = c("Native", "Introduced"))
+```
+
+```{r}
+# Assess the accuracy of the remotely sensed labels (Majority50_HS_Label) against the 
+# dominant vegetation cover assigned based on ground observations
+# These dominant vegetation cover types were assigned based on more than 50% of a plot being native or introduced vegetation
+confusionMatrix(merge_dominant_fia_cah_sub$Majority50_HS_Label, merge_dominant_fia_cah_sub$Majority50_fiaNI_Label)
+
+# Assess the accuracy of the remotely sensed labels (Majority75_HS_Label) against the 
+# dominant vegetation cover assigned based on ground observations
+# These dominant vegetation cover types were assigned based on more than 75% of a plot being native or introduced vegetation
+confusionMatrix(merge_dominant_fia_cah_sub$Majority75_HS_Label, merge_dominant_fia_cah_sub$Majority75_fiaNI_Label)
+```

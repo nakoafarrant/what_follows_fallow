@@ -1,0 +1,1063 @@
+---
+title: "Manuscript Figures"
+author: "D. Nākoa Farrant"
+date: "2023-04-06"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(here)
+library(tidyverse) #for dataframe manipulation
+library(MASS)
+library(sf)
+library(lwgeom)
+library(raster)
+library(rgdal)
+library(terra)
+library(gridExtra) # for a grid of environmentl plot
+library(exactextractr)
+
+library(lmtest) # for heteroskedasticity robust t-test
+library(sandwich) # for heteroskedasticity robust t-test
+
+library(RColorBrewer)
+library(cowplot) # for ggdraw plot
+library(patchwork) # new plotting package
+
+# packages to create the map figure
+library(rnaturalearth)
+library(rnaturalearthdata)
+library(ggspatial)
+```
+
+
+# Read in the data
+```{r}
+# abandoned sugarcane fields
+abS_figSF <- st_read(here("data/abandoned_sugar.shp")) %>% 
+  st_make_valid() %>% 
+  st_set_precision(1e6)
+
+# reference ecosystems
+ref_figSF <- st_read(here("data/reference_sites.shp")) %>% 
+  st_make_valid() %>% 
+  st_set_precision(1e6)
+
+# dataframe of abandoned fields and reference ecosystems to speed up non-spatial data plots
+abS_ref_figDF <- read_csv(here("data/abS_ref_figDF.csv"))
+```
+
+# Figure 1 - Create a map of abandoned sugarcane fields
+# General abandoned sugarcane plots
+```{r}
+sf_use_s2(FALSE)
+```
+
+```{r}
+abS_BigCluster_collectedGeom <- abS_figSF %>% 
+  st_transform(st_crs(4326))
+
+abS_BigCluster_collectedGeom <- abS_BigCluster_collectedGeom
+
+library(plyr)
+abS_BigCluster_collectedGeom$TimeAbClus <- mapvalues(abS_BigCluster_collectedGeom$TimeAb, from = c("4", "11", "20", "21", "24", "25", "26", "32", "36", "45", "49", "72", "73", "75", "94", "97", "117"), to = c("4", "11", "20-36", "20-36", "20-36", "20-36", "20-36", "20-36", "20-36", "45-49", "45-49", "72-75", "72-75", "72-75", "94-117", "94-117", "94-117"))
+
+abS_BigCluster_collectedGeom$TimeAbClusFactor <- factor(abS_BigCluster_collectedGeom$TimeAbClus, levels = c("4", "11", "20-36", "45-49", "72-75", "94-117"))
+
+detach(package:plyr)
+
+abS_BigCluster_collectedGeom_poly <- st_collection_extract(abS_BigCluster_collectedGeom, "POLYGON")
+```
+
+```{r}
+hi_coast_wgs84_island <- st_read(here("data/coast_n83/coast_gcs_wgs1984_island.shp")) %>% 
+  st_transform(st_crs(4326)) %>% 
+  st_set_precision(1e6) %>% 
+  st_make_valid() 
+```
+
+
+```{r}
+# Create an inset map of the world to identify where Hawaiʻi is on a world map
+# create a point marker for Hawai'i to include in the world map
+hi_df <- data.frame(lat  = c(20.8), lon = c(-157))
+hi_sf <-  st_as_sf(hi_df, coords = c("lon","lat")) %>% 
+  st_set_crs(st_crs(4326))
+
+###world
+worldmap <- ne_countries(scale = 'medium', type = 'map_units',
+                         returnclass = 'sf')
+
+### create a map of the world's continents to inset
+continent <- worldmap %>% 
+  summarise()
+
+cont_map <- ggplot() +
+  geom_sf(data = continent) +
+  geom_sf(data = hi_sf, color = "red", size = 6) +
+  #coord_sf(xlim = c(-165, -112), ylim = c(18, 40)) +
+  #labs(x = "Longitude (º)", y = "Latitude (º)") +
+  theme_bw()+
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1
+                                    ), plot.margin = unit(c(0, 0, 0, 0), "pt"),
+  panel.background = element_rect(fill = "white"), panel.grid.major = element_line(size = 0.5, linetype = 'solid',
+                                colour = "white"))
+
+```
+
+
+```{r}
+
+k_df <- data.frame(lat  = c(22.2), lon = c(-159.23))
+k_sf <-  st_as_sf(k_df, coords = c("lon","lat")) %>% 
+  st_set_crs(st_crs(4326)) %>% 
+  mutate(label = "(a)")
+
+o_df <- data.frame(lat  = c(21.7), lon = c(-157.63))
+o_sf <-  st_as_sf(o_df, coords = c("lon","lat")) %>% 
+  st_set_crs(st_crs(4326)) %>% 
+  mutate(label = "(b)")
+
+m_df <- data.frame(lat  = c(21), lon = c(-156.03))
+m_sf <-  st_as_sf(m_df, coords = c("lon","lat")) %>% 
+  st_set_crs(st_crs(4326)) %>% 
+  mutate(label = "(c)")
+
+h_df <- data.frame(lat  = c(20.35), lon = c(-156.1))
+h_sf <-  st_as_sf(h_df, coords = c("lon","lat")) %>% 
+  st_set_crs(st_crs(4326)) %>% 
+  mutate(label = "(d)")
+```
+
+
+```{r}
+k_nolab <- ggplot() +
+  geom_sf(data = hi_coast_wgs84_island %>% filter(Island == "Kauai")) + 
+  geom_sf(data = abS_BigCluster_collectedGeom_poly, aes(fill = TimeAbClusFactor, color = TimeAbClusFactor)) + 
+  coord_sf(xlim = c(-159.95, -159.15), ylim = c(21.8, 22.3), expand = FALSE) +
+  geom_sf_text(data = k_sf, aes(label = label)) +
+  #labs(x = "Longitude (º)", y = "Latitude (º)", fill = "Time Since Abandonment", color = "Time Since Abandonment") +
+  scale_x_continuous(breaks = c(-159.9, -159.2), labels = NULL) +
+  scale_y_continuous(breaks = c(21.8, 22.3), labels = NULL) +
+  theme_bw() +
+  theme(plot.margin = unit(c(0, -2, 0, 0), "pt"),
+    panel.border = element_rect(colour = "black", fill=NA, size=1),
+        axis.text.x = element_blank(), axis.text.y = element_blank(), axis.ticks = element_blank(),
+    axis.title.x = element_blank(), axis.title.y = element_blank(),
+  panel.background = element_rect(fill = "#99FFFF"), panel.grid.major = element_line(size = 0.5, linetype = 'solid',
+                                colour = "#99FFFF"), 
+  legend.position="none") +
+  scale_fill_manual(values = c("#6600CC", "#FF00FF", "#990000", "#FF3333",  "#FF9900", "#FFFF33")) +
+  scale_color_manual(values = c("#6600CC", "#FF00FF", "#990000", "#FF3333",  "#FF9900", "#FFFF33")) +
+  #guides(fill=guide_legend(title="Years Abandoned"), color=guide_legend(title="Years Abandoned")) +
+  annotation_scale(location = "bl")
+
+o_nolab <- ggplot() +
+  geom_sf(data = hi_coast_wgs84_island %>% filter(Island == "Oahu")) + 
+  geom_sf(data = abS_BigCluster_collectedGeom_poly, aes(fill = TimeAbClusFactor, color = TimeAbClusFactor)) + 
+  coord_sf(xlim = c(-158.35, -157.55), ylim = c(21.2, 21.8), expand = FALSE) +
+  geom_sf_text(data = o_sf, aes(label = label), 
+               nudge_x = c(-0.025, 0.025, -0.05),
+    nudge_y = c(-0.025, -0.025, 0)) +
+  scale_x_continuous(breaks = c(-158.3, -157.6), labels = NULL) +
+  scale_y_continuous(breaks = c(21.2, 21.8), labels = NULL) +
+  #labs(x = "Longitude (º)", y = "Latitude (º)", fill = "Time Since Abandonment", color = "Time Since Abandonment") +
+  theme_bw() +
+  theme(plot.margin = unit(c(0, -2, 0, 0), "pt"),
+    panel.border = element_rect(colour = "black", fill=NA, size=1),
+        axis.text.x = element_blank(), axis.text.y = element_blank(), axis.ticks = element_blank(),
+    axis.title.x = element_blank(), axis.title.y = element_blank(),
+  panel.background = element_rect(fill = "#99FFFF"), panel.grid.major = element_line(size = 0.5, linetype = 'solid',
+                                colour = "#99FFFF"),
+  legend.position="none") +
+  scale_fill_manual(values = c("#6600CC", "#FF00FF", "#990000", "#FF3333",  "#FF9900", "#FFFF33")) +
+  scale_color_manual(values = c("#6600CC", "#FF00FF", "#990000", "#FF3333",  "#FF9900", "#FFFF33")) +
+  #guides(fill=guide_legend(title="Years Abandoned"), color=guide_legend(title="Years Abandoned")) +
+  annotation_scale(location = "bl")
+
+m_nolab <- ggplot() +
+  geom_sf(data = hi_coast_wgs84_island %>% filter(Island == "Maui")) + 
+  geom_sf(data = abS_BigCluster_collectedGeom_poly, aes(fill = TimeAbClusFactor, color = TimeAbClusFactor)) + 
+  coord_sf(xlim = c(-156.75, -155.95), ylim = c(20.5, 21.1), expand = FALSE) +
+  geom_sf_text(data = m_sf, aes(label = label)) +
+  scale_x_continuous(breaks = c(-156.8, -155.8), labels = NULL) +
+  scale_y_continuous(breaks = c(20.5, 21.1), labels = NULL) +
+  #labs(x = "Longitude (º)", y = "Latitude (º)", fill = "Time Since Abandonment", color = "Time Since Abandonment") +
+  theme_bw() +
+  theme(plot.margin = unit(c(0, -2, 0, 0), "pt"),
+    panel.border = element_rect(colour = "black", fill=NA, size=1),
+        axis.text.x = element_blank(), axis.text.y = element_blank(), axis.ticks = element_blank(),
+    axis.title.x = element_blank(), axis.title.y = element_blank(),
+  panel.background = element_rect(fill = "#99FFFF"), panel.grid.major = element_line(size = 0.5, linetype = 'solid',
+                                colour = "#99FFFF"), 
+  legend.position="none") +
+   scale_fill_manual(values = c("#6600CC", "#FF00FF", "#990000", "#FF3333",  "#FF9900", "#FFFF33")) +
+  scale_color_manual(values = c("#6600CC", "#FF00FF", "#990000", "#FF3333",  "#FF9900", "#FFFF33")) +
+  #guides(fill=guide_legend(title="Years Abandoned"), color=guide_legend(title="Years Abandoned")) +
+  annotation_scale(location = "bl")
+
+h_nolab <- ggplot() +
+  geom_sf(data = hi_coast_wgs84_island %>% filter(Island == "Hawaii")) + 
+  geom_sf(data = abS_BigCluster_collectedGeom_poly, aes(fill = TimeAbClusFactor, color = TimeAbClusFactor)) + 
+  coord_sf(xlim = c(-156.2, -154.7), ylim = c(18.65, 20.45), expand = FALSE) +
+  geom_sf_text(data = h_sf, aes(label = label)) +
+  scale_x_continuous(breaks = c(-156.2, -154.7), labels = NULL) +
+  scale_y_continuous(breaks = c(18.7, 20.4), labels = NULL) +
+  scale_fill_manual(values = c("#6600CC", "#FF00FF", "#990000", "#FF3333",  "#FF9900", "#FFFF33")) +
+  scale_color_manual(values = c("#6600CC", "#FF00FF", "#990000", "#FF3333",  "#FF9900", "#FFFF33")) +
+  guides(fill=guide_legend(title="Years Abandoned", nrow=1, byrow=TRUE), color=guide_legend(title="Years Abandoned", nrow=2,byrow=TRUE)) +
+  labs(x = "Longitude (º)", y = "Latitude (º)") +
+  theme_bw() +
+  theme(plot.margin = unit(c(0, 0, 0, -2), "pt"),
+    panel.border = element_rect(colour = "black", fill=NA, size=1),
+        axis.text.x = element_blank(), axis.text.y = element_blank(), axis.ticks = element_blank(),
+    axis.title.x = element_blank(), axis.title.y = element_blank(),
+  panel.background = element_rect(fill = "#99FFFF"), panel.grid.major = element_line(size = 0.5, linetype = 'solid',
+                                colour = "#99FFFF"), 
+  legend.background = element_rect(colour = "black", fill = "white", size = 0.1), legend.key.size = unit(1, "lines")) +
+  annotation_scale(location = "bl") +
+  ggspatial::annotation_north_arrow(
+    location = "tr", which_north = "true",
+    style = ggspatial::north_arrow_nautical(
+      fill = c("grey40", "white"),
+      line_col = "grey20"
+    ))
+```
+
+```{r}
+p2 <- ((k_nolab / o_nolab / m_nolab) | h_nolab) + theme(legend.position = "none")
+le1 <- cowplot::get_legend(h_nolab)
+
+cowplot::plot_grid(p2, le1, nrow = 2, rel_heights = c(1, 0.2))
+```
+
+
+# Figure 2 - Extract environmental data in abandoned sugarcane fields and reference sites
+
+```{r}
+elev <- rast(here("data/env_variables/elev.tif"))
+slppct <- rast(here("data/env_variables/slppct.tif"))
+precip <- rast(here("data/env_variables/precip.tif"))
+humid <- rast(here("data/env_variables/humid.tif"))
+cec <- rast(here("data/env_variables/pH.tif"))
+pH <- rast(here("data/env_variables/soil_moist.tif"))
+soil_moist <- rast(here("data/env_variables/cec.tif"))
+MeanAge_resamp <- rast(here("data/env_variables/MeanAge_resample.tif"))
+
+env_stack <- c(elev, slppct, precip, humid, cec, pH, soil_moist, MeanAge_resamp)
+```
+
+```{r}
+abS_figSF_4326_sub_poly <- abS_figSF %>% 
+  st_transform(st_crs(4326)) %>% 
+  dplyr::select(FID_fig, TimeAb, area_ha)
+
+ref_figSF_4326_sub <- ref_figSF %>% 
+  st_transform(st_crs(4326)) %>% 
+  dplyr::select(FID_fig, TimeAb, area_ha)
+```
+
+```{r}
+# Requires a few minutes to run
+abS_figSF_4326_sub_extract <- cbind(abS_figSF_4326_sub_poly, exact_extract(env_stack, abS_figSF_4326_sub_poly, fun = "mean"))
+ref_figSF_4326_sub_extract <- cbind(ref_figSF_4326_sub, exact_extract(env_stack, ref_figSF_4326_sub, fun = "mean"))
+```
+
+```{r}
+abS_figDF_4326_extract <- abS_figSF_4326_sub_extract %>% 
+  st_drop_geometry() %>% 
+  drop_na() # need to drop the NA values in the pH, CEC, and soil moisture data for some of the polygons in the large set of abandoned sugarcane fields
+
+ref_figDF_4326_extract <- ref_figSF_4326_sub_extract %>% 
+  st_drop_geometry() %>% 
+  drop_na() # need to drop the NA values in the pH, CEC, and soil moisture data for some of the polygons in the large set of abandoned sugarcane fields
+
+```
+
+```{r}
+abS_summ_zonal_weighted <- abS_figDF_4326_extract %>%
+  group_by(FID_fig, TimeAb) %>% 
+  summarise(FID_area = sum(area_ha), elev_mean_FID = mean(mean.elev), slppct_mean_FID = mean(mean.slppct), ppt_mean_FID = mean(mean.precip), humid_mean_FID = mean(mean.humid), pH_mean_FID = mean(mean.pH), cec_mean_FID = mean(mean.cec), soilmoist_mean_FID = mean(mean.soil_moist), MeanAge_mean_FID = mean(mean.layer)) %>% 
+  ungroup() %>% 
+  group_by(TimeAb) %>% 
+  summarise(TimeAbArea = sum(FID_area), obs_count = length(TimeAb), elev_AW = sum(elev_mean_FID *FID_area)/sum(FID_area), elev_sd_AW = sqrt(sum(FID_area * (elev_mean_FID-elev_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), elev_se = elev_sd_AW/sqrt(obs_count), elev_95perc = 1.96*elev_se, slppct_AW = sum(slppct_mean_FID *FID_area)/sum(FID_area), slppct_sd_AW = sqrt(sum(FID_area * (slppct_mean_FID-slppct_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), slppct_se = slppct_sd_AW/sqrt(obs_count), slppct_95perc = 1.96*slppct_se, ppt_AW = sum(ppt_mean_FID *FID_area)/sum(FID_area), ppt_sd_AW = sqrt(sum(FID_area * (ppt_mean_FID-ppt_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), ppt_se = ppt_sd_AW/sqrt(obs_count), ppt_95perc = 1.96*ppt_se, humid_AW = sum(humid_mean_FID *FID_area)/sum(FID_area), humid_sd_AW = sqrt(sum(FID_area * (humid_mean_FID-humid_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), humid_se = humid_sd_AW/sqrt(obs_count), humid_95perc = 1.96*humid_se, pH_AW = sum(pH_mean_FID *FID_area)/sum(FID_area), pH_sd_AW = sqrt(sum(FID_area * (pH_mean_FID-pH_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), pH_se = pH_sd_AW/sqrt(obs_count), pH_95perc = 1.96*pH_se, cec_AW = sum(cec_mean_FID *FID_area)/sum(FID_area), cec_sd_AW = sqrt(sum(FID_area * (cec_mean_FID-cec_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), cec_se = cec_sd_AW/sqrt(obs_count), cec_95perc = 1.96*cec_se, soilmoist_AW = sum(soilmoist_mean_FID *FID_area)/sum(FID_area), soilmoist_sd_AW = sqrt(sum(FID_area * (soilmoist_mean_FID-soilmoist_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), soilmoist_se = soilmoist_sd_AW/sqrt(obs_count), soilmoist_95perc = 1.96*soilmoist_se, MeanAge_AW = sum(MeanAge_mean_FID *FID_area)/sum(FID_area), MeanAge_sd_AW = sqrt(sum(FID_area * (MeanAge_mean_FID-MeanAge_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), MeanAge_se = MeanAge_sd_AW/sqrt(obs_count), MeanAge_95perc = 1.96*MeanAge_se)
+
+ref_summ_zonal_weighted <- ref_figDF_4326_extract %>%
+  group_by(FID_fig, TimeAb) %>% 
+  summarise(FID_area = sum(area_ha), elev_mean_FID = mean(mean.elev), slppct_mean_FID = mean(mean.slppct), ppt_mean_FID = mean(mean.precip), humid_mean_FID = mean(mean.humid), pH_mean_FID = mean(mean.pH), cec_mean_FID = mean(mean.cec), soilmoist_mean_FID = mean(mean.soil_moist), MeanAge_mean_FID = mean(mean.layer)) %>% 
+  ungroup() %>% 
+  group_by(TimeAb) %>% 
+  summarise(TimeAbArea = sum(FID_area), obs_count = length(TimeAb), elev_AW = sum(elev_mean_FID *FID_area)/sum(FID_area), elev_sd_AW = sqrt(sum(FID_area * (elev_mean_FID-elev_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), elev_se = elev_sd_AW/sqrt(obs_count), elev_95perc = 1.96*elev_se, slppct_AW = sum(slppct_mean_FID *FID_area)/sum(FID_area), slppct_sd_AW = sqrt(sum(FID_area * (slppct_mean_FID-slppct_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), slppct_se = slppct_sd_AW/sqrt(obs_count), slppct_95perc = 1.96*slppct_se, ppt_AW = sum(ppt_mean_FID *FID_area)/sum(FID_area), ppt_sd_AW = sqrt(sum(FID_area * (ppt_mean_FID-ppt_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), ppt_se = ppt_sd_AW/sqrt(obs_count), ppt_95perc = 1.96*ppt_se, humid_AW = sum(humid_mean_FID *FID_area)/sum(FID_area), humid_sd_AW = sqrt(sum(FID_area * (humid_mean_FID-humid_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), humid_se = humid_sd_AW/sqrt(obs_count), humid_95perc = 1.96*humid_se, pH_AW = sum(pH_mean_FID *FID_area)/sum(FID_area), pH_sd_AW = sqrt(sum(FID_area * (pH_mean_FID-pH_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), pH_se = pH_sd_AW/sqrt(obs_count), pH_95perc = 1.96*pH_se, cec_AW = sum(cec_mean_FID *FID_area)/sum(FID_area), cec_sd_AW = sqrt(sum(FID_area * (cec_mean_FID-cec_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), cec_se = cec_sd_AW/sqrt(obs_count), cec_95perc = 1.96*cec_se, soilmoist_AW = sum(soilmoist_mean_FID *FID_area)/sum(FID_area), soilmoist_sd_AW = sqrt(sum(FID_area * (soilmoist_mean_FID-soilmoist_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), soilmoist_se = soilmoist_sd_AW/sqrt(obs_count), soilmoist_95perc = 1.96*soilmoist_se, MeanAge_AW = sum(MeanAge_mean_FID *FID_area)/sum(FID_area), MeanAge_sd_AW = sqrt(sum(FID_area * (MeanAge_mean_FID-MeanAge_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), MeanAge_se = MeanAge_sd_AW/sqrt(obs_count), MeanAge_95perc = 1.96*MeanAge_se)
+```
+
+
+```{r}
+# there are some NA and infitie values for some of the weighted standard error calculations that result from there being only a single polygon area abandoned 117 years ago
+abS_summ_zonal_weighted[is.na(abS_summ_zonal_weighted)] <- 0
+
+abS_summ_zonal_weighted <- abS_summ_zonal_weighted %>% 
+  mutate_all(function(x) ifelse(is.infinite(x), 0, x)) 
+
+```
+
+```{r}
+elev_point_p <- ggplot(data = abS_summ_zonal_weighted) +
+  geom_point(aes(x = TimeAb, y = elev_AW), color = "#FF9900") +
+  geom_errorbar(aes(x = TimeAb, ymin=elev_AW-elev_95perc, ymax=elev_AW+elev_95perc), width=.2, color = "#FF9900") +
+  labs(x = "", y = "Elevation (m)") +
+  theme_bw() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+geom_hline(data = ref_summ_zonal_weighted, aes(yintercept = elev_AW), color = "blue")
+
+ppt_point_p <- ggplot(data = abS_summ_zonal_weighted) +
+  geom_point(aes(x = TimeAb, y = ppt_AW), color = "#FF9900") +
+  geom_errorbar(aes(x = TimeAb, ymin=ppt_AW-ppt_95perc, ymax=ppt_AW+ppt_95perc), width=.2, color = "#FF9900") +
+  labs(x = "", y = "Annual Precipitation (mm)") +
+  theme_bw() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  geom_hline(data = ref_summ_zonal_weighted, aes(yintercept = ppt_AW), color = "blue")
+
+humid_point_p <- ggplot(data = abS_summ_zonal_weighted) +
+  geom_point(aes(x = TimeAb, y = humid_AW), color = "#FF9900") +
+  geom_errorbar(aes(x = TimeAb, ymin=humid_AW-humid_95perc, ymax=humid_AW+humid_95perc), width=.2, color = "#FF9900") +
+  labs(x = "", y = "Relative Humidity (%)") +
+  theme_bw() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  geom_hline(data = ref_summ_zonal_weighted, aes(yintercept = humid_AW), color = "blue")
+
+slppct_point_p <- ggplot(data = abS_summ_zonal_weighted) +
+  geom_point(aes(x = TimeAb, y = slppct_AW), color = "#FF9900") +
+  geom_errorbar(aes(x = TimeAb, ymin=slppct_AW-slppct_95perc, ymax=slppct_AW+slppct_95perc), width=.2, color = "#FF9900") +
+  labs(x = "", y = "Slope (%)") +
+  theme_bw() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  geom_hline(data = ref_summ_zonal_weighted, aes(yintercept = slppct_AW), color = "blue")
+
+cec_point_p <- ggplot(data = abS_summ_zonal_weighted) +
+  geom_point(aes(x = TimeAb, y = cec_AW), color = "#FF9900") +
+  geom_errorbar(aes(x = TimeAb, ymin=cec_AW-cec_95perc, ymax=cec_AW+cec_95perc), width=.2, color = "#FF9900") +
+  labs(x = "", y = "Soil CEC (cmol c/kg)") + # centimoles of charge per kilogram
+  theme_bw() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  geom_hline(data = ref_summ_zonal_weighted, aes(yintercept = cec_AW), color = "blue")
+
+pH_point_p <- ggplot(data = abS_summ_zonal_weighted) +
+  geom_point(aes(x = TimeAb, y = pH_AW), color = "#FF9900") +
+  geom_errorbar(aes(x = TimeAb, ymin=pH_AW-pH_95perc, ymax=pH_AW+pH_95perc), width=.2, color = "#FF9900") +
+  labs(x = "", y = "Soil pH") +
+  theme_bw() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  geom_hline(data = ref_summ_zonal_weighted, aes(yintercept = pH_AW), color = "blue")
+
+pH_point_p2 <- ggplot(data = abS_summ_zonal_weighted) +
+  geom_point(aes(x = TimeAb, y = pH_AW), color = "#FF9900") +
+  geom_errorbar(aes(x = TimeAb, ymin=pH_AW-pH_95perc, ymax=pH_AW+pH_95perc), width=.2, color = "#FF9900") +
+  labs(x = "", y = "Soil pH") +
+  theme_bw() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  theme(legend.title = element_blank(),
+  legend.position = c(0.8, 0.15),
+         legend.key.size = unit(1, "lines"),
+  legend.spacing.y = unit(0, "pt"),
+  legend.background = element_blank(),
+  #legend.position="bottom",
+  #legend.justification = "right",
+  legend.box.background = element_rect(linetype="solid", fill = "white",
+                                colour ="black"))
+
+pH_p <- pH_point_p2 +
+  geom_hline(data = ref_summ_zonal_weighted, aes(yintercept = pH_AW, linetype = TimeAb %>% as.factor()), color = "blue") +
+  labs(linetype = "") +
+  scale_linetype_discrete(name = "", labels = c("Reference")) +
+  theme(legend.position = c(0.8, 0.85))
+
+soilmoist_point_p <- ggplot(data = abS_summ_zonal_weighted) +
+  geom_point(aes(x = TimeAb, y = soilmoist_AW*100), color = "#FF9900") +
+  geom_errorbar(aes(x = TimeAb, ymin=(soilmoist_AW-soilmoist_95perc)*100, ymax=(soilmoist_AW+soilmoist_95perc)*100), width=.2, color = "#FF9900") +
+  labs(x = "", y = "Available Soil Moisture (%)") +
+  theme_bw() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  geom_hline(data = ref_summ_zonal_weighted, aes(yintercept = soilmoist_AW*100), color = "blue")
+
+log_age_point_p <- ggplot(data = abS_summ_zonal_weighted) +
+  geom_point(aes(x = TimeAb, y = log(MeanAge_AW)), color = "#FF9900") +
+  geom_errorbar(aes(x = TimeAb, ymin=log(MeanAge_AW-MeanAge_95perc), ymax=log(MeanAge_AW+MeanAge_95perc)), width=.2, color = "#FF9900") +
+  labs(x = "", y = "Substrate Age (log Years)") +
+  theme_bw() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+  geom_hline(data = ref_summ_zonal_weighted, aes(yintercept = log(MeanAge_AW)), color = "blue")
+
+log_age_point_p2 <- ggplot(data = abS_summ_zonal_weighted) +
+  geom_point(aes(x = TimeAb, y = log(MeanAge_AW)), color = "#FF9900") +
+  geom_errorbar(aes(x = TimeAb, ymin=log(MeanAge_AW-MeanAge_95perc), ymax=log(MeanAge_AW+MeanAge_95perc)), width=.2, color = "#FF9900") +
+  labs(x = "", y = "Substrate Age (log Years)") +
+  theme_bw() +
+  theme(panel.border = element_rect(colour = "black", fill=NA, size=1)) +
+    theme(legend.title = element_blank(),
+    legend.position = c(0.8, 0.15),
+           legend.key.size = unit(1, "lines"),
+    legend.spacing.y = unit(0, "pt"),
+    #legend.position="bottom",
+    #legend.justification = "right",
+    legend.box.background = element_rect(size=0.5, linetype="solid", fill = "white", 
+                                  colour ="black"))
+
+log_age_p <- log_age_point_p2 +
+  geom_hline(data = ref_summ_zonal_weighted, aes(yintercept = log(MeanAge_AW), linetype = TimeAb %>% as.factor()), color = "blue") +
+  labs(linetype = "") +
+  scale_linetype_discrete(name = "", labels = c("Reference")) +
+  theme(legend.position = c(0.8, 0.15))
+
+```
+
+```{r}
+# Figure 2
+pdf(here("data/env_traits_dissolve.pdf"), width = 8, height = 6) # Open a new pdf file
+grid.arrange(elev_point_p, slppct_point_p, ppt_point_p, pH_p, ncol=2, bottom = "Years Since Abandonment") # Write the grid.arrange in the file
+```
+
+```{r}
+# Supplementary figure
+pdf(here("data/all_env_traits_dissolve.pdf"), width = 8, height = 12) # Open a new pdf file
+grid.arrange(elev_point_p, slppct_point_p, ppt_point_p, humid_point_p, pH_point_p, cec_point_p,
+  soilmoist_point_p, log_age_p, ncol=2, bottom = "Years Since Abandonment") # Write the grid.arrange in the file
+```
+
+
+# Figure 3 - Vegetation canopy structure
+
+```{r}
+abS_figDF <- abS_ref_figDF %>% 
+  filter(TimeSinceAb != 0) 
+  
+ref_figDF <- abS_ref_figDF %>% 
+  filter(TimeSinceAb == 0) 
+```
+
+
+```{r}
+abS_figDF$Maj_LC <- factor(abS_figDF$Maj_LC, levels = c("Forest", "Shrubland", "Grassland", "Not Vegetated"))
+
+ref_figDF$Maj_LC <- factor(ref_figDF$Maj_LC, levels = c("Forest", "Shrubland", "Grassland", "Not Vegetated"))
+
+ref_figDF_MajLC_aggTime <- ref_figDF %>% 
+  group_by(TimeAb, Maj_LC) %>% 
+  summarise(AbBinArea_ha = sum(area_ha)) %>% 
+  mutate(prop = AbBinArea_ha / sum(AbBinArea_ha) *100)
+
+ref_figDF_MajLC_aggTime <- ref_figDF_MajLC_aggTime %>%  
+  mutate(Reference = "Reference")
+```
+
+```{r}
+abS_figDF_summarise_MajLC <- abS_figDF %>%
+  dplyr::select(FID_fig, TimeAb, Maj_LC, area_ha) %>% 
+  group_by(FID_fig, Maj_LC, TimeAb) %>% 
+  summarise(MajLC_FID_area = sum(area_ha)) %>% 
+  ungroup()
+
+abS_figDF_summarise_MajLC_subset <- abS_figDF_summarise_MajLC %>% 
+  dplyr::select(FID_fig, TimeAb) %>% 
+  unique() %>% # want only the unique Feature IDs for each number of years since abandonment
+  mutate(Forest = 1, Shrubland = 1, Grassland = 1, Not_Vegetated = 1)
+
+abS_figDF_summarise_MajLC_subset_gather <- gather(abS_figDF_summarise_MajLC_subset, Maj_LC, Value, Forest:Not_Vegetated)
+
+abS_figDF_summarise_MajLC_subset_gather$Maj_LC <- ifelse(abS_figDF_summarise_MajLC_subset_gather$Maj_LC == "Not_Vegetated", "Not Vegetated", abS_figDF_summarise_MajLC_subset_gather$Maj_LC)
+
+merge_MajLC <- merge(abS_figDF_summarise_MajLC_subset_gather, abS_figDF_summarise_MajLC, by = c("FID_fig", "TimeAb", "Maj_LC"), all = T)
+
+# Add an area of 0 square meters for every land cover type that does not have an explicit observation
+# this results in every FID having some area for each land cover type
+# Even if a parcel is 100% grassland, it will also have observations of being 0% shrub and 0% forest
+merge_MajLC$MajLC_FID_area <- ifelse(is.na(merge_MajLC$MajLC_FID_area), 0, merge_MajLC$MajLC_FID_area)
+```
+
+```{r}
+merge_MajLC_AreaWeighted <- merge_MajLC %>% 
+  group_by(FID_fig) %>% 
+  mutate(FID_area = sum(MajLC_FID_area), prop = MajLC_FID_area/FID_area*100) %>% 
+  ungroup() %>% 
+  group_by(TimeAb, Maj_LC) %>% 
+  summarise(prop_AW = sum(prop*FID_area)/sum(FID_area), obs_count = sum(FID_area != 0), sd_AW = sqrt(sum(FID_area * (prop-prop_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), prop_se = sd_AW/sqrt(obs_count), prop_95perc = 1.96*prop_se) %>% 
+  ungroup() %>% 
+  group_by(TimeAb) %>% 
+  mutate(prop_sum = sum(prop_AW)) 
+
+merge_MajLC_AreaWeighted$Maj_LC <- factor(merge_MajLC_AreaWeighted$Maj_LC, levels = c("Forest", "Shrubland", "Grassland", "Not Vegetated"))
+```
+
+
+```{r}
+forest_df <- merge_MajLC_AreaWeighted %>% 
+  filter(Maj_LC == "Forest") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+shrub_df <- merge_MajLC_AreaWeighted %>% 
+  filter(Maj_LC == "Shrubland") %>% 
+  mutate(Time = as.numeric(TimeAb)) #%>% 
+  #filter(Time >= 20) # check how the model fit varies why you only use fields that have been abandoned more than 20 years
+
+grass_df <- merge_MajLC_AreaWeighted %>% 
+  filter(Maj_LC == "Grassland") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+bare_df <- merge_MajLC_AreaWeighted %>% 
+  filter(Maj_LC == "Not Vegetated") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+forest_model <- lm(prop_AW ~ log(Time), data = forest_df)
+shrub_model <- lm(prop_AW ~ log(Time), data = shrub_df)
+grass_model <- lm(prop_AW ~ log(Time), data = grass_df)
+bare_model <- lm(prop_AW ~ log(Time), data = bare_df)
+
+summary(forest_model)
+summary(shrub_model)
+summary(grass_model)
+summary(bare_model)
+
+# model form is: % cover = intercept + coefficient*ln(Time)
+forest_model$coefficients
+shrub_model$coefficients
+grass_model$coefficients
+bare_model$coefficients
+
+Time = seq(1,120)
+#Time_shrub = seq(20,120) # test to see how the shrub_model fit improves if you just use fields that have been abandoned 20+ years to build the model
+
+forest_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(forest_model,newdata=list(Time)), Maj_LC = "Forest")
+
+shrub_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(shrub_model,newdata=list(Time)), Maj_LC = "Shrubland")
+
+grass_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(grass_model,newdata=list(Time)), Maj_LC = "Grassland")
+
+bare_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(bare_model,newdata=list(Time)), Maj_LC = "Not Vegetated")
+
+fit_df <- do.call("rbind", list(forest_fit_df, shrub_fit_df, grass_fit_df, bare_fit_df))
+
+fit_df$Maj_LC <- factor(fit_df$Maj_LC, level = c("Forest", "Shrubland", "Grassland", "Not Vegetated"))
+ref_figDF_MajLC_aggTime$Maj_LC <- factor(ref_figDF_MajLC_aggTime$Maj_LC, level = c("Forest", "Shrubland", "Grassland", "Not Vegetated"))
+
+# Robust t test
+forest_robust <- coeftest(forest_model, vcov = vcovHC(forest_model, type = "HC0"))
+shrub_robust <- coeftest(shrub_model, vcov = vcovHC(shrub_model, type = "HC0"))
+grass_robust <- coeftest(grass_model, vcov = vcovHC(grass_model, type = "HC0"))
+bare_robust <- coeftest(bare_model, vcov = vcovHC(bare_model, type = "HC0"))
+
+
+#forest_robust
+#shrub_robust
+#grass_robust
+#bare_robust
+```
+
+```{r}
+# The relationship of the shrub model with the logarithmic transformation of time improves if you only consider fields abandoned for longer than 20 years
+# This accounts for the delayed development of a shrub category relative to grasslands
+# The relationship with time is still not significant but it is close (p = 0.07)
+shrub20_df <- merge_MajLC_AreaWeighted %>% 
+  filter(Maj_LC == "Shrubland") %>% 
+  mutate(Time = as.numeric(TimeAb)) %>% 
+  filter(Time >= 20) # check how the model fit varies why you only use fields that have been abandoned more than 20 years
+
+shrub20_model <- lm(prop_AW ~ log(Time), data = shrub20_df)
+
+summary(shrub20_model)
+
+Time_shrub = seq(20,120) # test to see how the shrub_model fit improves if you just use fields that have been abandoned 20+ years to build the model
+
+shrub20_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(shrub20_model,newdata=list(Time)), Maj_LC = "Shrubland")
+
+shrub20_robust <- coeftest(shrub20_model, vcov = vcovHC(shrub20_model, type = "HC0"))
+
+shrub20_robust
+
+```
+
+```{r}
+# model form is % cover = intercept + coefficient*ln(Time)
+# exp((desired % cover - intercept)/coefficient)
+# Time to reach reference forest cover
+ref_forest <- ref_figDF_MajLC_aggTime %>% 
+  ungroup() %>% 
+  filter(Maj_LC == "Forest")
+
+ref_forest_val <- ref_forest$prop
+
+ref_forest_time <- exp((ref_forest_val - forest_model$coefficients[["(Intercept)"]])/forest_model$coefficients[["log(Time)"]])
+
+# Time to reach reference shrubland cover
+ref_shrub <- ref_figDF_MajLC_aggTime %>% 
+  ungroup() %>% 
+  filter(Maj_LC == "Shrubland")
+
+ref_shrub_val <- ref_shrub$prop
+
+ref_shrub_time <- exp((ref_shrub_val - shrub_model$coefficients[["(Intercept)"]])/shrub_model$coefficients[["log(Time)"]])
+
+# Time to reach reference grassland cover
+ref_grass <- ref_figDF_MajLC_aggTime %>% 
+  ungroup() %>% 
+  filter(Maj_LC == "Grassland")
+
+ref_grass_val <- ref_grass$prop
+
+ref_grass_time <- exp((ref_grass_val - grass_model$coefficients[["(Intercept)"]])/grass_model$coefficients[["log(Time)"]])
+
+# Time to reach reference Not Vegetated cover
+ref_bare <- ref_figDF_MajLC_aggTime %>% 
+  ungroup() %>% 
+  filter(Maj_LC == "Not Vegetated")
+
+ref_bare_val <- ref_bare$prop
+
+ref_bare_time <- exp((ref_bare_val - bare_model$coefficients[["(Intercept)"]])/bare_model$coefficients[["log(Time)"]])
+
+ref_forest_time
+ref_shrub_time
+ref_grass_time
+ref_bare_time
+```
+
+
+```{r}
+# Group across all fields abandoned in a given year, what proportion of that area is in each of the Habitat Status classes
+MajLCprop_AW_p <- ggplot(data = merge_MajLC_AreaWeighted, aes(y =prop_AW, x=TimeAb)) +
+  geom_point(size = 1, color = "#FF9900") +
+  geom_errorbar(aes(ymin=prop_AW-prop_95perc, ymax=prop_AW+prop_95perc), color = "#FF9900") +
+  theme_bw() +
+  xlab("Years Since Abandonment") +
+  ylab("Percent Retired Area") +
+  labs(color = "Composition") +
+  scale_x_continuous(breaks=c(40, 80, 120)) +
+  ylim(0, 100) +
+  theme(text = element_text(size=18),
+    legend.title = element_blank(),
+    legend.position = c(0.88, 0.35),
+    legend.spacing.y = unit(0, "pt"),
+    #legend.position="bottom",
+    #legend.justification = "right",
+           legend.key.size = unit(1, "lines"), 
+    legend.background = element_rect(size=0.5, linetype="solid", 
+                                  colour ="black"))
+
+MajLC.labs <- c("(a) Forest", "(b) Shrubland", "(c) Grassland", "(d) Not Vegetated")
+names(MajLC.labs) <- c("Forest", "Shrubland", "Grassland", "Not Vegetated")
+
+MajLCprop_AW_p + geom_hline(data = ref_figDF_MajLC_aggTime, aes(yintercept = prop, linetype = Reference), color = "blue") +
+                           labs(linetype = "") +
+  #theme(legend.spacing.y = unit(0, "pt")) +
+  #guides(linetype = "none") + # removes legend completely
+  geom_line(data = fit_df, aes(x = Time, y = pred), color = "grey40", linetype = "dashed") +
+  labs(linetype = "") +
+  facet_wrap(~Maj_LC, labeller = labeller(Maj_LC = MajLC.labs)) 
+```
+
+# Figure 4 - vegetation canopy composition
+```{r}
+ref_figDF_HabStatus_aggTime <- ref_figDF %>% 
+  group_by(TimeAb, Hab_Status) %>% 
+  summarise(AbBinArea_ha = sum(area_ha)) %>% 
+  mutate(prop = AbBinArea_ha / sum(AbBinArea_ha) *100)
+
+ref_figDF_HabStatus_aggTime <- ref_figDF_HabStatus_aggTime %>%  
+  mutate(Reference = "Reference")
+```
+
+```{r}
+abS_figDF_summarise_HabStatus <- abS_figDF %>%
+  dplyr::select(FID_fig, TimeAb, Hab_Status, area_ha) %>% 
+  group_by(FID_fig, Hab_Status, TimeAb) %>% 
+  summarise(HabStatus_FID_area = sum(area_ha)) %>% 
+  ungroup()
+
+abS_figDF_summarise_HabStatus_subset <- abS_figDF_summarise_HabStatus %>% 
+  dplyr::select(FID_fig, TimeAb) %>% 
+  unique() %>% # want only the unique Feature IDs for each number of years since abandonment
+  mutate(Native = 1, Invasive = 1, Not_Vegetated = 1)
+
+abS_figDF_summarise_HabStatus_subset_gather <- gather(abS_figDF_summarise_HabStatus_subset, Hab_Status, Value, Native:Not_Vegetated)
+
+abS_figDF_summarise_HabStatus_subset_gather$Hab_Status <- ifelse(abS_figDF_summarise_HabStatus_subset_gather$Hab_Status == "Not_Vegetated", "Not Vegetated", abS_figDF_summarise_HabStatus_subset_gather$Hab_Status)
+
+merge_HabStatus <- merge(abS_figDF_summarise_HabStatus_subset_gather, abS_figDF_summarise_HabStatus, by = c("FID_fig", "TimeAb", "Hab_Status"), all = T)
+
+# Add an area of 0 square meters for every land cover type that does not have an explicit observation
+# this results in every FID having some area for each land cover type
+# Even if a parcel is 100% grassland, it will also have observations of being 0% shrub and 0% forest
+merge_HabStatus$HabStatus_FID_area <- ifelse(is.na(merge_HabStatus$HabStatus_FID_area), 0, merge_HabStatus$HabStatus_FID_area)
+```
+
+```{r}
+merge_HabStatus_AreaWeighted <- merge_HabStatus %>% 
+  group_by(FID_fig) %>% 
+  mutate(FID_area = sum(HabStatus_FID_area), prop = HabStatus_FID_area/FID_area*100) %>% 
+  ungroup() %>% 
+  group_by(TimeAb, Hab_Status) %>% 
+  summarise(prop_AW = sum(prop*FID_area)/sum(FID_area), obs_count = sum(FID_area != 0), sd_AW = sqrt(sum(FID_area * (prop-prop_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), prop_se = sd_AW/sqrt(obs_count), prop_95perc = 1.96*prop_se) %>% 
+  ungroup() %>% 
+  group_by(TimeAb) %>% 
+  mutate(prop_sum = sum(prop_AW))
+
+merge_HabStatus_AreaWeighted$Hab_Status <- factor(merge_HabStatus_AreaWeighted$Hab_Status, levels = c("Native", "Invasive", "Not Vegetated"))
+```
+
+
+```{r}
+native_df <- merge_HabStatus_AreaWeighted %>% 
+  filter(Hab_Status == "Native") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+invasive_df <- merge_HabStatus_AreaWeighted %>% 
+  filter(Hab_Status == "Invasive") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+bare_comp_df <- merge_HabStatus_AreaWeighted %>% 
+  filter(Hab_Status == "Not Vegetated") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+native_model <- lm(prop_AW ~ log(Time), data = native_df)
+invasive_model <- lm(prop_AW ~ log(Time), data = invasive_df)
+bare_comp_model <- lm(prop_AW ~ log(Time), data = bare_comp_df)
+
+
+Time = seq(1,120)
+
+native_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(native_model,newdata=list(Time)), Hab_Status = "Native")
+
+invasive_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(invasive_model,newdata=list(Time)), Hab_Status = "Invasive")
+
+bare_comp_fit_df <- data.frame(Time) %>% 
+  mutate(pred = predict(bare_comp_model,newdata=list(Time)), Hab_Status = "Not Vegetated")
+
+fit_comp_df <- do.call("rbind", list(native_fit_df, invasive_fit_df, bare_comp_fit_df))
+fit_comp_df$Hab_Status <- factor(fit_comp_df$Hab_Status, level = c("Native", "Invasive", "Not Vegetated"))
+
+# Robust t test
+native_robust <- coeftest(native_model, vcov = vcovHC(native_model, type = "HC0"))
+invasive_robust <- coeftest(invasive_model, vcov = vcovHC(invasive_model, type = "HC0"))
+bare_comp_robust <- coeftest(bare_comp_model, vcov = vcovHC(bare_comp_model, type = "HC0"))
+
+native_robust
+invasive_robust
+bare_comp_robust
+```
+
+```{r}
+# Time to reach reference native vegetation cover
+ref_native <- ref_figDF_HabStatus_aggTime %>% 
+  ungroup() %>% 
+  filter(Hab_Status == "Native")
+
+ref_native_val <- ref_native$prop
+
+ref_native_time <- exp((ref_native_val - native_model$coefficients[["(Intercept)"]])/native_model$coefficients[["log(Time)"]])
+
+# Time to reach reference invasive vegetation cover
+ref_invasive <- ref_figDF_HabStatus_aggTime %>% 
+  ungroup() %>% 
+  filter(Hab_Status == "Invasive")
+
+ref_invasive_val <- ref_invasive$prop
+
+ref_invasive_time <- exp((ref_invasive_val - invasive_model$coefficients[["(Intercept)"]])/invasive_model$coefficients[["log(Time)"]])
+
+# Time to reach reference Not Vegetated cover
+ref_bare_comp <- ref_figDF_HabStatus_aggTime %>% 
+  ungroup() %>% 
+  filter(Hab_Status == "Not Vegetated")
+
+ref_bare_comp_val <- ref_bare_comp$prop
+
+ref_bare_comp_time <- exp((ref_bare_comp_val - bare_comp_model$coefficients[["(Intercept)"]])/bare_comp_model$coefficients[["log(Time)"]])
+
+ref_native_time
+ref_invasive_time
+ref_bare_comp_time
+```
+
+```{r}
+merge_HabStatus_AreaWeighted$Hab_Status <- factor(merge_HabStatus_AreaWeighted$Hab_Status, levels = c("Native", "Invasive", "Not Vegetated"))
+
+ref_figDF_HabStatus_aggTime$Hab_Status <- factor(ref_figDF_HabStatus_aggTime$Hab_Status, levels = c("Native", "Invasive", "Not Vegetated"))
+```
+
+```{r}
+# Group across all fields abandoned in a given year, what proportion of that area is in each of the Habitat Status classes
+HabStatusprop_AW_p <- ggplot(data = merge_HabStatus_AreaWeighted, aes(y =prop_AW, x=TimeAb)) +
+  geom_point(size = 1, color = "#FF9900") +
+  geom_errorbar(aes(ymin=prop_AW-prop_95perc, ymax=prop_AW+prop_95perc), color = "#FF9900") +
+  theme_bw() +
+  xlab("Years Since Abandonment") +
+  ylab("Percent Retired Area") +
+  labs(color = "Composition") +
+  scale_x_continuous(breaks=c(40, 80, 120)) +
+  ylim(0, 100) +
+  theme(text = element_text(size=18),
+        legend.title = element_blank(),
+    legend.position = c(0.88, 0.9),
+    legend.spacing.y = unit(0, "pt"),
+        #legend.position = "bottom",
+           legend.key.size = unit(1, "lines"), 
+    legend.background = element_rect(linetype="solid", 
+                                  colour ="black"))
+
+
+HabStatus.labs <- c("(a) Native", "(b) Non-Native", "(c) Not Vegetated")
+names(HabStatus.labs) <- c("Native", "Invasive", "Not Vegetated")
+
+HabStatusprop_AW_p + geom_hline(data = ref_figDF_HabStatus_aggTime, aes(yintercept = prop, linetype = Reference), color = "blue") +
+                           labs(linetype = "") +
+  theme(legend.spacing.y = unit(0, "pt")) +
+  #guides(linetype = "none") +
+  geom_line(data = fit_comp_df, aes(x = Time, y = pred), color = "grey40", linetype = "dashed") +
+  facet_wrap(~Hab_Status, labeller = labeller(Hab_Status = HabStatus.labs)) 
+```
+
+# Figure 5 - Vegetation Inex plots
+```{r}
+abS_VIlong <- gather(abS_figDF, condition, measurement, savi_ho:ndwi_ka)
+ref_VIlong <- gather(ref_figDF, condition, measurement, savi_ho:ndwi_ka)
+
+abS_VIlong$season <- ifelse(grepl("ho", abS_VIlong$condition), "Wet", 
+                                              ifelse(grepl("ka", abS_VIlong$condition),"Dry", "NA"))
+
+abS_VIlong$vegindex <- ifelse(grepl("savi", abS_VIlong$condition), "SAVI", 
+                                              ifelse(grepl("ndre", abS_VIlong$condition),"NDRE", 
+                                                     ifelse(grepl("ndwi", abS_VIlong$condition), "NDWI", "NA")))
+
+ref_VIlong$season <- ifelse(grepl("ho", ref_VIlong$condition), "Wet", 
+                                              ifelse(grepl("ka", ref_VIlong$condition),"Dry", "NA"))
+
+ref_VIlong$vegindex <- ifelse(grepl("savi", ref_VIlong$condition), "SAVI", 
+                                              ifelse(grepl("ndre", ref_VIlong$condition),"NDRE", 
+                                                     ifelse(grepl("ndwi", ref_VIlong$condition), "NDWI", "NA")))
+
+ref_VIlong$Reference <- ifelse(ref_VIlong$TimeAb == 0, "Reference", "NA")
+
+ref_VIlong$RefSeason = ifelse(ref_VIlong$Reference == "Reference" & ref_VIlong$season == "Wet", "Reference, Wet", ifelse(ref_VIlong$Reference == "Reference" & ref_VIlong$season == "Dry", "Reference, Dry", "NA"))
+```
+
+```{r}
+abS_VIlong_mean_summarise_weighted <- abS_VIlong %>%
+  dplyr::select(FID_fig, TimeAb, condition, season, vegindex, measurement, area_ha) %>% 
+  filter(!is.na(measurement)) %>% 
+  group_by(FID_fig, condition, season, TimeAb) %>% 
+  mutate(FID_area = sum(area_ha), mean_vi = mean(measurement)) %>%
+  ungroup() %>% 
+  group_by(TimeAb, condition, season, vegindex) %>% 
+  summarise(mean_AW = sum(mean_vi*FID_area)/sum(FID_area), obs_count = length(TimeAb), sd_AW = sqrt(sum(FID_area * (mean_vi-mean_AW)^2) / (sum(FID_area)*(obs_count-1)/obs_count)), vi_se = sd_AW/sqrt(obs_count), vi_95perc = 1.96*vi_se)
+
+ref_VIlong_mean_summ <- ref_VIlong %>% 
+  filter(!is.na(measurement)) %>% 
+  group_by(RefSeason, condition, vegindex) %>% 
+  summarise(mean_RefSeason = mean(measurement))
+```
+
+```{r}
+# Create separate data frames of the data for each vegetation index in each season to train models on
+ndre_df_wet <- abS_VIlong_mean_summarise_weighted %>% 
+  filter(TimeAb != 0) %>% 
+  filter(vegindex == "NDRE" & season == "Wet") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+ndwi_df_wet <- abS_VIlong_mean_summarise_weighted %>% 
+  filter(TimeAb != 0) %>% 
+  filter(vegindex == "NDWI" & season == "Wet") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+savi_df_wet <- abS_VIlong_mean_summarise_weighted %>% 
+  filter(TimeAb != 0) %>% 
+  filter(vegindex == "SAVI" & season == "Wet") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+ndre_df_dry <- abS_VIlong_mean_summarise_weighted %>% 
+  filter(TimeAb != 0) %>% 
+  filter(vegindex == "NDRE" & season == "Dry") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+ndwi_df_dry <- abS_VIlong_mean_summarise_weighted %>% 
+  filter(TimeAb != 0) %>% 
+  filter(vegindex == "NDWI" & season == "Dry") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+savi_df_dry <- abS_VIlong_mean_summarise_weighted %>% 
+  filter(TimeAb != 0) %>% 
+  filter(vegindex == "SAVI" & season == "Dry") %>% 
+  mutate(Time = as.numeric(TimeAb))
+
+# Create logarithmic models for each of the three vegetation indices in both the wet and dry seasons
+ndre_model_wet <- lm(mean_AW ~ log(Time), data = ndre_df_wet)
+ndwi_model_wet <- lm(mean_AW ~ log(Time), data = ndwi_df_wet)
+savi_model_wet <- lm(mean_AW ~ log(Time), data = savi_df_wet)
+
+ndre_model_dry <- lm(mean_AW ~ log(Time), data = ndre_df_dry)
+ndwi_model_dry <- lm(mean_AW ~ log(Time), data = ndwi_df_dry)
+savi_model_dry <- lm(mean_AW ~ log(Time), data = savi_df_dry)
+
+# Create a time sequence from 1 to 120 years
+Time = seq(1,120)
+
+
+# Create data frames with the predicted values for each vegetation index across the 120 year time series
+ndre_fit_df_wet <- data.frame(Time) %>% 
+  mutate(pred = predict(ndre_model_wet,newdata=list(Time)), vegindex = "NDRE", season = "Wet")
+
+ndwi_fit_df_wet <- data.frame(Time) %>% 
+  mutate(pred = predict(ndwi_model_wet,newdata=list(Time)), vegindex = "NDWI", season = "Wet")
+
+savi_fit_df_wet <- data.frame(Time) %>% 
+  mutate(pred = predict(savi_model_wet,newdata=list(Time)), vegindex = "SAVI", season = "Wet")
+
+ndre_fit_df_dry <- data.frame(Time) %>% 
+  mutate(pred = predict(ndre_model_dry,newdata=list(Time)), vegindex = "NDRE", season = "Dry")
+
+ndwi_fit_df_dry <- data.frame(Time) %>% 
+  mutate(pred = predict(ndwi_model_dry,newdata=list(Time)), vegindex = "NDWI", season = "Dry")
+
+savi_fit_df_dry <- data.frame(Time) %>% 
+  mutate(pred = predict(savi_model_dry,newdata=list(Time)), vegindex = "SAVI", season = "Dry")
+
+# Bind all of these predicted logarithmic models into a single data frame 
+vi_fit_df_season <- do.call("rbind", list(ndre_fit_df_wet, ndwi_fit_df_wet, savi_fit_df_wet, ndre_fit_df_dry, ndwi_fit_df_dry, savi_fit_df_dry))
+
+# Relevel the vegetation index factor (no particular order; just the order used in the figure)
+vi_fit_df_season$vegindex <- factor(vi_fit_df_season$vegindex, level = c("NDRE", "NDWI", "SAVI"))
+
+
+# Robust t test on the models
+ndre_robust_wet <- coeftest(ndre_model_wet, vcov = vcovHC(ndre_model_wet, type = "HC0"))
+ndwi_robust_wet <- coeftest(ndwi_model_wet, vcov = vcovHC(ndwi_model_wet, type = "HC0"))
+savi_robust_wet <- coeftest(savi_model_wet, vcov = vcovHC(savi_model_wet, type = "HC0"))
+
+ndre_robust_dry <- coeftest(ndre_model_dry, vcov = vcovHC(ndre_model_dry, type = "HC0"))
+ndwi_robust_dry <- coeftest(ndwi_model_dry, vcov = vcovHC(ndwi_model_dry, type = "HC0"))
+savi_robust_dry <- coeftest(savi_model_dry, vcov = vcovHC(savi_model_dry, type = "HC0"))
+
+ndre_robust_wet
+ndwi_robust_wet
+savi_robust_wet
+
+ndre_robust_dry
+ndwi_robust_dry
+savi_robust_dry
+```
+
+
+```{r}
+# Estimate the number of years to reach reference ecosystem values of each vegetation index in each season based on the reference ecosystem values in each season and the predicted logarithmic models
+
+# Time to reach reference NDRE
+ref_ndre_wet <- ref_VIlong_mean_summ %>% 
+  ungroup() %>% 
+  filter(vegindex == "NDRE")
+
+ref_ndre_val_wet <- mean(ref_ndre_wet$mean_RefSeason)
+
+ref_ndre_time_wet <- exp((ref_ndre_val_wet - ndre_model_wet$coefficients[["(Intercept)"]])/ndre_model_wet$coefficients[["log(Time)"]])
+
+# Time to reach reference NDWI
+ref_ndwi_wet <- ref_VIlong_mean_summ %>% 
+  ungroup() %>% 
+  filter(vegindex == "NDWI")
+
+ref_ndwi_val_wet <- mean(ref_ndwi_wet$mean_RefSeason)
+
+ref_ndwi_time_wet <- exp((ref_ndwi_val_wet - ndwi_model_wet$coefficients[["(Intercept)"]])/ndwi_model_wet$coefficients[["log(Time)"]])
+
+# Time to reach reference NDWI
+ref_savi_wet <- ref_VIlong_mean_summ %>% 
+  ungroup() %>% 
+  filter(vegindex == "SAVI")
+
+ref_savi_val_wet <- mean(ref_savi_wet$mean_RefSeason)
+
+ref_savi_time_wet <- exp((ref_savi_val_wet - savi_model_wet$coefficients[["(Intercept)"]])/savi_model_wet$coefficients[["log(Time)"]])
+
+ref_ndre_time_wet
+ref_ndwi_time_wet
+ref_savi_time_wet
+
+# Time to reach reference NDRE
+ref_ndre_dry <- ref_VIlong_mean_summ %>% 
+  ungroup() %>% 
+  filter(vegindex == "NDRE")
+
+ref_ndre_val_dry <- mean(ref_ndre_dry$mean_RefSeason)
+
+ref_ndre_time_dry <- exp((ref_ndre_val_dry - ndre_model_dry$coefficients[["(Intercept)"]])/ndre_model_dry$coefficients[["log(Time)"]])
+
+# Time to reach reference NDWI
+ref_ndwi_dry <- ref_VIlong_mean_summ %>% 
+  ungroup() %>% 
+  filter(vegindex == "NDWI")
+
+ref_ndwi_val_dry <- mean(ref_ndwi_dry$mean_RefSeason)
+
+ref_ndwi_time_dry <- exp((ref_ndwi_val_dry - ndwi_model_dry$coefficients[["(Intercept)"]])/ndwi_model_dry$coefficients[["log(Time)"]])
+
+# Time to reach reference NDWI
+ref_savi_dry <- ref_VIlong_mean_summ %>% 
+  ungroup() %>% 
+  filter(vegindex == "SAVI")
+
+ref_savi_val_dry <- mean(ref_savi_dry$mean_RefSeason)
+
+ref_savi_time_dry <- exp((ref_savi_val_dry - savi_model_dry$coefficients[["(Intercept)"]])/savi_model_dry$coefficients[["log(Time)"]])
+
+ref_ndre_time_dry
+ref_ndwi_time_dry
+ref_savi_time_dry
+```
+```{r}
+ref_VIlong_mean_summ$linetype <- ifelse(ref_VIlong_mean_summ$RefSeason == "Reference, Dry", "dashed", "solid")
+
+vi_fit_df_season$linetype <- ifelse(vi_fit_df_season$season == "Dry", "dashed", "solid")
+
+LINES <- c("Reference, Dry" = "dashed", "Reference, Wet" = "solid", "Dry" = "dashed", "Wet" = "solid")
+```
+
+
+```{r}
+all_vi_mean_AW_season <- ggplot(data = abS_VIlong_mean_summarise_weighted, aes(x = TimeAb, y = mean_AW)) +
+  geom_point(size = 1.5, color = "#FF9900", aes(shape = season)) +
+  scale_shape_manual(values=c(1, 16)) +
+  geom_errorbar(aes(ymin=mean_AW-vi_95perc, ymax=mean_AW+vi_95perc), color = "#FF9900") +
+  theme_bw() +
+  xlab("Years Since Abandonment") +
+  ylab("Mean") +
+  labs(color = "Season") +
+  scale_x_continuous(breaks=c(40, 80, 120)) +
+  theme(text = element_text(size=18),
+        legend.title = element_blank(),
+    #legend.position = c(0.16, 0.8),
+    legend.position = "none",
+           legend.key.size = unit(1, "lines"),
+    legend.spacing.y = unit(0, "pt"),
+    legend.background = element_blank(),
+    #legend.position="bottom",
+    #legend.justification = "right",
+    legend.box.background = element_rect(size=0.5, linetype="solid", 
+                                  colour ="black")
+    )
+
+vegindex.labs <- c("(a) NDRE", "(b) NDWI", "(c) SAVI")
+names(vegindex.labs) <- c("NDRE", "NDWI", "SAVI")
+
+all_vi_mean_AW_season + geom_hline(data = ref_VIlong_mean_summ, aes(yintercept = mean_RefSeason, linetype = RefSeason), color = "blue") +
+                           labs(linetype = "") +
+  geom_line(data = vi_fit_df_season, aes(x = Time, y = pred, linetype = season), color = "grey40") +
+  scale_linetype_manual(values = LINES) +
+  facet_wrap(~vegindex, labeller = labeller(vegindex = vegindex.labs)) 
+```
